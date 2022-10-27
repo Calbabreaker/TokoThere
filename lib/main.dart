@@ -39,13 +39,22 @@ class LocationFinder extends StatefulWidget {
 }
 
 class _LocationFinderState extends State<LocationFinder> {
-  final List<Vector2> _locationCache = [];
-  Future<Vector2?>? _locationFuture;
+  final List<Vector2> _placeCache = [];
+  Future<Vector2?>? _placeFuture;
+  Vector2 _currentLocation = Vector2.zero();
+
+  @override
+  void initState() {
+    Location.instance.onLocationChanged.listen((LocationData location) {
+      _currentLocation = Vector2(location.longitude!, location.latitude!);
+    });
+    super.initState();
+  }
 
   @override
   Widget build(BuildContext context) {
     return FutureBuilder(
-        future: _locationFuture,
+        future: _placeFuture,
         builder: (context, snapshot) {
           return Column(
             mainAxisAlignment: MainAxisAlignment.center,
@@ -66,8 +75,7 @@ class _LocationFinderState extends State<LocationFinder> {
               ElevatedButton(
                   onPressed: snapshot.connectionState == ConnectionState.waiting
                       ? null
-                      : () =>
-                          setState(() => {_locationFuture = _fetchLocation()}),
+                      : () => setState(() => {_placeFuture = _fetchPlace()}),
                   child: const Padding(
                     padding: EdgeInsets.all(16.0),
                     child: Text("Locate Place", style: largeFont),
@@ -99,6 +107,7 @@ class _LocationFinderState extends State<LocationFinder> {
       return Text(text, style: biggerFont, textAlign: TextAlign.center);
     } else {
       return Compass(
+        current: _currentLocation,
         target: snapshot.data!,
       );
     }
@@ -110,20 +119,19 @@ class _LocationFinderState extends State<LocationFinder> {
   //   node(around:$DISTANCE,$LAT,$LON)[name];
   // );
   // out skel noids;
-  Future<Vector2?> _fetchLocation() async {
-    if (_locationCache.isNotEmpty) {
+  Future<Vector2?> _fetchPlace() async {
+    if (_placeCache.isNotEmpty) {
       return _chooseRandomCache();
     }
 
-    final current = await Location.instance.getLocation();
     const distance = 1000;
     final response = await http.get(Uri.parse(
-        "https://overpass-api.de/api/interpreter?data=%5Bout%3Ajson%5D%5Btimeout%3A20%5D%3B%28node%28around%3A$distance%2C${current.latitude}%2C${current.longitude}%29%5Bname%5D%3B%29%3Bout%20skel%20noids%3B"));
+        "https://overpass-api.de/api/interpreter?data=%5Bout%3Ajson%5D%5Btimeout%3A20%5D%3B%28node%28around%3A$distance%2C${_currentLocation.y}%2C${_currentLocation.x}%29%5Bname%5D%3B%29%3Bout%20skel%20noids%3B"));
 
     if (response.statusCode == 200) {
       final data = jsonDecode(response.body);
       for (final node in data["elements"]) {
-        _locationCache.add(Vector2(node["lon"], node["lat"]));
+        _placeCache.add(Vector2(node["lon"], node["lat"]));
       }
 
       return _chooseRandomCache();
@@ -133,34 +141,32 @@ class _LocationFinderState extends State<LocationFinder> {
   }
 
   Vector2? _chooseRandomCache() {
-    if (_locationCache.isEmpty) return null;
-    final index = random.nextInt(_locationCache.length);
-    return _locationCache.removeAt(index);
+    if (_placeCache.isEmpty) return null;
+    final index = random.nextInt(_placeCache.length);
+    return _placeCache.removeAt(index);
   }
 }
 
 class Compass extends StatefulWidget {
   const Compass({
     super.key,
+    required this.current,
     required this.target,
   });
 
   final Vector2 target;
+  final Vector2 current;
 
   @override
   State<Compass> createState() => _CompassState();
 }
 
 class _CompassState extends State<Compass> {
-  Vector2? _current;
   double _prevHeading = 0.0;
   double _turns = 0.0;
 
   @override
   void initState() {
-    Location.instance.onLocationChanged.listen((LocationData location) {
-      _current = Vector2(location.longitude!, location.latitude!);
-    });
     super.initState();
   }
 
@@ -188,7 +194,7 @@ class _CompassState extends State<Compass> {
 
         northDir += 180;
         // print(northDir);
-        final diffCoords = widget.target - Vector2.zero();
+        final diffCoords = widget.target - widget.current;
         final targetDir = math.atan2(diffCoords.y, diffCoords.x);
         final heading = targetDir - northDir;
 
