@@ -1,11 +1,10 @@
-import "dart:async" show StreamSubscription;
 import "dart:convert" show jsonDecode;
 import "dart:math" as math;
 import "package:flutter/material.dart";
 import "package:flutter/services.dart";
 import "package:flutter_compass/flutter_compass.dart";
 import "package:location/location.dart";
-import "package:vector_math/vector_math.dart" show Vector2, radians;
+import "package:vector_math/vector_math.dart" show Vector2, degrees, radians;
 import "package:http/http.dart" as http;
 
 const largeFont = TextStyle(fontSize: 24);
@@ -75,14 +74,43 @@ class _LocationFinderState extends State<LocationFinder> {
               ElevatedButton(
                   onPressed: snapshot.connectionState == ConnectionState.waiting
                       ? null
-                      : () => setState(() => {_placeFuture = _fetchPlace()}),
+                      : _onFindButtonPress,
                   child: const Padding(
                     padding: EdgeInsets.all(16.0),
-                    child: Text("Locate Place", style: largeFont),
+                    child: Text("Find Place", style: largeFont),
                   )),
             ],
           );
         });
+  }
+
+  void _onFindButtonPress() {
+    if (_placeFuture == null) {
+      return _setFuture();
+    }
+
+    final dialog = AlertDialog(
+      title: const Text("Are you sure want to find a new place?"),
+      actions: [
+        TextButton(
+            onPressed: () {
+              Navigator.of(context).pop();
+              _setFuture();
+            },
+            child: const Text("Yes")),
+        TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text("Cancel")),
+      ],
+    );
+
+    showDialog(context: context, builder: (context) => dialog);
+  }
+
+  void _setFuture() {
+    setState(() {
+      _placeFuture = _fetchPlace();
+    });
   }
 
   Widget _buildCompass(AsyncSnapshot<Vector2?> snapshot) {
@@ -192,14 +220,20 @@ class _CompassState extends State<Compass> {
           );
         }
 
-        northDir += 180;
-        // print(northDir);
         final diffCoords = widget.target - widget.current;
         final targetDir = math.atan2(diffCoords.y, diffCoords.x);
-        final heading = targetDir - northDir;
+        final heading = degrees(targetDir) - northDir - 90;
 
-        final diff = _prevHeading - heading;
-        _turns += diff;
+        // Make sure doesn't flip to other side
+        double diff = heading - _prevHeading;
+        if (diff.abs() > 180) {
+          if (_prevHeading > heading) {
+            diff = 360 - (heading - _prevHeading).abs();
+          } else {
+            diff = (360 - (_prevHeading - heading).abs()) * -1.0;
+          }
+        }
+        _turns += (diff / 360);
         _prevHeading = heading;
 
         final diffKM = Vector2(
