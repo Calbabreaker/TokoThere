@@ -39,13 +39,12 @@ class LocationFinder extends StatefulWidget {
 }
 
 const placeTypeFilterDict = {
-  "Any": "[name]",
-  "Attraction": "[wikidata]",
+  "Attraction": '[tourism][tourism!~"motel|hostel|hotel|apartment"]',
+  "Shop": "[shop]",
   "Restaurant": "[amenity=restaurant]",
   "Fast Food": "[amenity=fast_food]",
   "Cafe": "[amenity=cafe]",
-  "Hotel": "[tourism=hotel]",
-  "Shop": "[shop]",
+  "Any": "[name]",
 };
 
 class _LocationFinderState extends State<LocationFinder> {
@@ -193,8 +192,17 @@ class _LocationFinderState extends State<LocationFinder> {
     final lon = location.longitude;
     final dist = int.parse(_rangeField.text);
     final tagFilter = placeTypeFilterDict[_placeType];
+
+    double mult = 0.0;
+    if (dist > 1000) {
+      mult = 0.8;
+    } else if (dist > 500) {
+      mult = 0.5;
+    } else if (dist > 200) {
+      mult = 0.2;
+    }
     final response = await http.get(Uri.parse(
-        "https://overpass-api.de/api/interpreter?data=[out:json][timeout:20];node(around:${dist * 1.1},$lat,$lon)$tagFilter->.a;node(around:${dist * 0.8},$lat,$lon)$tagFilter->.b;(.a; - .b;);out skel noids;"));
+        "https://overpass-api.de/api/interpreter?data=[out:json][timeout:20];node(around:$dist,$lat,$lon)$tagFilter->.a;node(around:${dist * mult},$lat,$lon)$tagFilter->.b;(.a; - .b;);out skel noids;"));
 
     if (response.statusCode == 200) {
       final data = jsonDecode(response.body);
