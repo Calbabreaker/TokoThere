@@ -1,3 +1,4 @@
+import "dart:async" show StreamSubscription;
 import "dart:convert" show jsonDecode;
 import "dart:math" as math;
 import "package:flutter/material.dart";
@@ -51,6 +52,8 @@ class _LocationFinderState extends State<LocationFinder> {
   Future<Vector2?>? _placeFuture;
   final _rangeField = TextEditingController(text: "1000");
   String _placeType = "Any";
+  Vector2 _currentLocation = Vector2.zero();
+  StreamSubscription<LocationData>? _locationStream;
 
   @override
   Widget build(BuildContext context) {
@@ -171,24 +174,27 @@ class _LocationFinderState extends State<LocationFinder> {
     } else {
       return Compass(
         target: snapshot.data!,
+        current: _currentLocation,
       );
     }
   }
 
-  // Uses this query:
-  // [out:json][timeout:20];
-  //   node(around:{$DISTANCE * 1.2},$LAT,$LON)[name] -> .a;
-  //   node(around:${DISTANCE * 0.8},$LAT,$LON)[name] -> .b;
-  //   (.a; - .b;);
-  // out skel noids;
+  Future<LocationData> _getLocation() {
+    _locationStream ??= Location.instance.onLocationChanged.listen((location) {
+      _currentLocation = Vector2(location.longitude!, location.latitude!);
+    });
+
+    return Location.instance.getLocation();
+  }
+
   Future<Vector2?> _fetchPlace() async {
-    final location = await Location.instance.getLocation();
+    final location = await _getLocation();
     final lat = location.latitude;
     final lon = location.longitude;
     final dist = int.parse(_rangeField.text);
     final tagFilter = placeTypeFilterDict[_placeType];
     final response = await http.get(Uri.parse(
-        "https://overpass-api.de/api/interpreter?data=[out:json][timeout:20];node(around:${dist * 1.2},$lat,$lon)$tagFilter->.a;node(around:${dist * 0.8},$lat,$lon)$tagFilter->.b;(.a; - .b;);out skel noids;"));
+        "https://overpass-api.de/api/interpreter?data=[out:json][timeout:20];node(around:${dist * 1.1},$lat,$lon)$tagFilter->.a;node(around:${dist * 0.8},$lat,$lon)$tagFilter->.b;(.a; - .b;);out skel noids;"));
 
     if (response.statusCode == 200) {
       final data = jsonDecode(response.body);
@@ -210,9 +216,11 @@ class Compass extends StatefulWidget {
   const Compass({
     super.key,
     required this.target,
+    required this.current,
   });
 
   final Vector2 target;
+  final Vector2 current;
 
   @override
   State<Compass> createState() => _CompassState();
@@ -221,15 +229,6 @@ class Compass extends StatefulWidget {
 class _CompassState extends State<Compass> {
   double _prevHeading = 0.0;
   double _turns = 0.0;
-  Vector2 _currentLocation = Vector2.zero();
-
-  @override
-  void initState() {
-    Location.instance.onLocationChanged.listen((LocationData location) {
-      _currentLocation = Vector2(location.longitude!, location.latitude!);
-    });
-    super.initState();
-  }
 
   @override
   Widget build(BuildContext context) {
@@ -253,9 +252,9 @@ class _CompassState extends State<Compass> {
           );
         }
 
-        final diffCoords = widget.target - _currentLocation;
+        final diffCoords = widget.target - widget.current;
         final targetDir = math.atan2(diffCoords.y, diffCoords.x);
-        final heading = degrees(targetDir) - northDir - 90;
+        final heading = degrees(targetDir) - northDir + 90;
 
         // Make sure arrow doesn't flip to other side
         double diff = heading - _prevHeading;
