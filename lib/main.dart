@@ -4,7 +4,7 @@ import "package:flutter/material.dart";
 import "package:flutter/services.dart";
 import "package:flutter_compass/flutter_compass.dart";
 import "package:location/location.dart";
-import "package:vector_math/vector_math.dart" show Vector2, degrees, radians;
+import "package:vector_math/vector_math.dart" show Vector2, degrees;
 import "package:http/http.dart" as http;
 
 const largeFont = TextStyle(fontSize: 24);
@@ -24,7 +24,7 @@ class MyApp extends StatelessWidget {
       title: "TokoThere",
       theme: ThemeData(brightness: Brightness.dark),
       home: const Scaffold(
-        body: LocationFinder(),
+        body: Center(child: SingleChildScrollView(child: LocationFinder())),
       ),
     );
   }
@@ -37,18 +37,20 @@ class LocationFinder extends StatefulWidget {
   State<LocationFinder> createState() => _LocationFinderState();
 }
 
-class _LocationFinderState extends State<LocationFinder> {
-  final List<Vector2> _placeCache = [];
-  Future<Vector2?>? _placeFuture;
-  Vector2 _currentLocation = Vector2.zero();
+const placeTypeFilterDict = {
+  "Any": "[name]",
+  "Attraction": "[wikidata]",
+  "Restaurant": "[amenity=restaurant]",
+  "Fast Food": "[amenity=fast_food]",
+  "Cafe": "[amenity=cafe]",
+  "Hotel": "[tourism=hotel]",
+  "Shop": "[shop]",
+};
 
-  @override
-  void initState() {
-    Location.instance.onLocationChanged.listen((LocationData location) {
-      _currentLocation = Vector2(location.longitude!, location.latitude!);
-    });
-    super.initState();
-  }
+class _LocationFinderState extends State<LocationFinder> {
+  Future<Vector2?>? _placeFuture;
+  final _rangeField = TextEditingController(text: "1000");
+  String _placeType = "Any";
 
   @override
   Widget build(BuildContext context) {
@@ -56,10 +58,9 @@ class _LocationFinderState extends State<LocationFinder> {
         future: _placeFuture,
         builder: (context, snapshot) {
           return Column(
-            mainAxisAlignment: MainAxisAlignment.center,
             children: [
               Container(
-                  margin: const EdgeInsets.symmetric(vertical: 64.0),
+                  margin: const EdgeInsets.only(bottom: 32.0),
                   alignment: Alignment.center,
                   child: Material(
                       shape: const CircleBorder(),
@@ -71,14 +72,46 @@ class _LocationFinderState extends State<LocationFinder> {
                           width: 325,
                           height: 325,
                           child: _buildCompass(snapshot)))),
-              ElevatedButton(
-                  onPressed: snapshot.connectionState == ConnectionState.waiting
-                      ? null
-                      : _onFindButtonPress,
-                  child: const Padding(
-                    padding: EdgeInsets.all(16.0),
-                    child: Text("Find Place", style: largeFont),
+              withLabel(
+                "Range: ",
+                "m",
+                SizedBox(
+                  width: 80,
+                  child: TextField(
+                    keyboardType: TextInputType.number,
+                    controller: _rangeField,
+                    inputFormatters: <TextInputFormatter>[
+                      FilteringTextInputFormatter.digitsOnly
+                    ],
+                  ),
+                ),
+              ),
+              withLabel(
+                  "Type: ",
+                  "",
+                  DropdownButton(
+                    value: _placeType,
+                    style: biggerFont,
+                    items: placeTypeFilterDict.keys.map((value) {
+                      return DropdownMenuItem(
+                        value: value,
+                        child: Text(value),
+                      );
+                    }).toList(),
+                    onChanged: (v) => setState(() => _placeType = v!),
                   )),
+              Container(
+                margin: const EdgeInsets.only(top: 32),
+                child: ElevatedButton(
+                    onPressed:
+                        snapshot.connectionState == ConnectionState.waiting
+                            ? null
+                            : _onFindButtonPress,
+                    child: const Padding(
+                      padding: EdgeInsets.all(16.0),
+                      child: Text("Find Place", style: largeFont),
+                    )),
+              ),
             ],
           );
         });
@@ -114,28 +147,29 @@ class _LocationFinderState extends State<LocationFinder> {
   }
 
   Widget _buildCompass(AsyncSnapshot<Vector2?> snapshot) {
-    String? text;
+    String? error;
 
     if (snapshot.connectionState == ConnectionState.none) {
-      text = "Press button";
+      return const Text("TokoThere",
+          style: TextStyle(fontSize: 36), textAlign: TextAlign.center);
     } else if (snapshot.connectionState == ConnectionState.waiting) {
       return const CircularProgressIndicator();
     } else if (snapshot.hasError) {
       if (snapshot.error is PlatformException) {
         final exception = snapshot.error as PlatformException;
-        text = exception.message!;
+        error = exception.message!;
       } else {
-        text = snapshot.error.toString();
+        error = snapshot.error.toString();
       }
     } else if (snapshot.data == null) {
-      text = "No location found nearby";
+      error = "No place found within area";
     }
 
-    if (text != null) {
-      return Text(text, style: biggerFont, textAlign: TextAlign.center);
+    if (error != null) {
+      _placeFuture = null;
+      return Text(error, style: biggerFont, textAlign: TextAlign.center);
     } else {
       return Compass(
-        current: _currentLocation,
         target: snapshot.data!,
       );
     }
@@ -143,47 +177,42 @@ class _LocationFinderState extends State<LocationFinder> {
 
   // Uses this query:
   // [out:json][timeout:20];
-  // (
-  //   node(around:$DISTANCE,$LAT,$LON)[name];
-  // );
+  //   node(around:{$DISTANCE * 1.2},$LAT,$LON)[name] -> .a;
+  //   node(around:${DISTANCE * 0.8},$LAT,$LON)[name] -> .b;
+  //   (.a; - .b;);
   // out skel noids;
   Future<Vector2?> _fetchPlace() async {
-    if (_placeCache.isNotEmpty) {
-      return _chooseRandomCache();
-    }
-
-    const distance = 1000;
+    final location = await Location.instance.getLocation();
+    final lat = location.latitude;
+    final lon = location.longitude;
+    final dist = int.parse(_rangeField.text);
+    final tagFilter = placeTypeFilterDict[_placeType];
     final response = await http.get(Uri.parse(
-        "https://overpass-api.de/api/interpreter?data=%5Bout%3Ajson%5D%5Btimeout%3A20%5D%3B%28node%28around%3A$distance%2C${_currentLocation.y}%2C${_currentLocation.x}%29%5Bname%5D%3B%29%3Bout%20skel%20noids%3B"));
+        "https://overpass-api.de/api/interpreter?data=[out:json][timeout:20];node(around:${dist * 1.2},$lat,$lon)$tagFilter->.a;node(around:${dist * 0.8},$lat,$lon)$tagFilter->.b;(.a; - .b;);out skel noids;"));
 
     if (response.statusCode == 200) {
       final data = jsonDecode(response.body);
-      for (final node in data["elements"]) {
-        _placeCache.add(Vector2(node["lon"], node["lat"]));
+      final elements = data["elements"] as List;
+      if (elements.isNotEmpty) {
+        final index = random.nextInt(data["elements"].length);
+        final node = data["elements"][index];
+        return Vector2(node["lon"], node["lat"]);
+      } else {
+        return null;
       }
-
-      return _chooseRandomCache();
     } else {
-      throw "Failed to fetch https://overpass-api.de";
+      throw "Failed to fetch https://overpass-api.de ${response.statusCode}";
     }
-  }
-
-  Vector2? _chooseRandomCache() {
-    if (_placeCache.isEmpty) return null;
-    final index = random.nextInt(_placeCache.length);
-    return _placeCache.removeAt(index);
   }
 }
 
 class Compass extends StatefulWidget {
   const Compass({
     super.key,
-    required this.current,
     required this.target,
   });
 
   final Vector2 target;
-  final Vector2 current;
 
   @override
   State<Compass> createState() => _CompassState();
@@ -192,9 +221,13 @@ class Compass extends StatefulWidget {
 class _CompassState extends State<Compass> {
   double _prevHeading = 0.0;
   double _turns = 0.0;
+  Vector2 _currentLocation = Vector2.zero();
 
   @override
   void initState() {
+    Location.instance.onLocationChanged.listen((LocationData location) {
+      _currentLocation = Vector2(location.longitude!, location.latitude!);
+    });
     super.initState();
   }
 
@@ -204,7 +237,7 @@ class _CompassState extends State<Compass> {
       stream: FlutterCompass.events,
       builder: (context, snapshot) {
         if (snapshot.hasError) {
-          return Text('Error reading heading: ${snapshot.error}');
+          return Text("Error reading heading: ${snapshot.error}");
         }
 
         if (snapshot.connectionState == ConnectionState.waiting) {
@@ -220,11 +253,11 @@ class _CompassState extends State<Compass> {
           );
         }
 
-        final diffCoords = widget.target - widget.current;
+        final diffCoords = widget.target - _currentLocation;
         final targetDir = math.atan2(diffCoords.y, diffCoords.x);
         final heading = degrees(targetDir) - northDir - 90;
 
-        // Make sure doesn't flip to other side
+        // Make sure arrow doesn't flip to other side
         double diff = heading - _prevHeading;
         if (diff.abs() > 180) {
           if (_prevHeading > heading) {
@@ -245,7 +278,6 @@ class _CompassState extends State<Compass> {
               turns: _turns,
               duration: const Duration(milliseconds: 500),
               curve: Curves.ease,
-              // angle: targetDir - northDir - math.pi / 2,
               child: const Icon(Icons.arrow_right_alt,
                   size: 275, color: Colors.white)),
           Transform.translate(
@@ -256,4 +288,15 @@ class _CompassState extends State<Compass> {
       },
     );
   }
+}
+
+Widget withLabel(String label, String endLabel, Widget widget) {
+  return Row(
+    mainAxisAlignment: MainAxisAlignment.center,
+    children: [
+      Text(label, style: biggerFont),
+      widget,
+      Text(endLabel, style: biggerFont)
+    ],
+  );
 }
