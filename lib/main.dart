@@ -5,7 +5,7 @@ import "package:flutter/material.dart";
 import "package:flutter/services.dart";
 import "package:flutter_compass/flutter_compass.dart";
 import "package:location/location.dart";
-import "package:vector_math/vector_math.dart" show Vector2, degrees;
+import "package:vector_math/vector_math.dart" show Vector2, degrees, radians;
 import "package:http/http.dart" as http;
 
 const largeFont = TextStyle(fontSize: 24);
@@ -268,9 +268,15 @@ class _CompassState extends State<Compass> {
         _turns += (diff / 360);
         _prevHeading = heading;
 
-        final diffKM = Vector2(
-            40075 * diffCoords.x * math.cos(diffCoords.y) / 360,
-            diffCoords.y * 111.32);
+        // Uses https://en.wikipedia.org/wiki/Haversine_formula
+        final sinDLat = math.sin(radians(diffCoords.y / 2));
+        final sinDLon = math.sin(radians(diffCoords.x / 2));
+        final cosLat = math.cos(radians(widget.current.y)) *
+            math.cos(radians(widget.target.y));
+        final a = math.pow(sinDLat, 2) + cosLat * math.pow(sinDLon, 2);
+        final c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a));
+        const earthR = 6378.137;
+        final dist = (earthR * c * 1000).round();
 
         return Column(children: [
           AnimatedRotation(
@@ -281,7 +287,7 @@ class _CompassState extends State<Compass> {
                   size: 275, color: Colors.white)),
           Transform.translate(
             offset: const Offset(0, -15),
-            child: Text("${(diffKM.length * 1000).round()}m", style: largeFont),
+            child: Text("${dist}m", style: largeFont),
           ),
         ]);
       },
