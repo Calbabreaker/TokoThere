@@ -79,11 +79,12 @@ class _LocationFinderState extends State<LocationFinder> {
                 "m",
                 SizedBox(
                   width: 80,
-                  child: TextField(
+                  child: TextFormField(
                     keyboardType: TextInputType.number,
                     controller: _rangeField,
                     inputFormatters: <TextInputFormatter>[
-                      FilteringTextInputFormatter.digitsOnly
+                      FilteringTextInputFormatter.digitsOnly,
+                      LengthLimitingTextInputFormatter(4),
                     ],
                   ),
                 ),
