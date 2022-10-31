@@ -1,4 +1,3 @@
-import "dart:async" show StreamSubscription;
 import "dart:convert" show jsonDecode;
 import "dart:math" as math;
 import "package:flutter/material.dart";
@@ -51,8 +50,7 @@ class _LocationFinderState extends State<LocationFinder> {
   Future<Vector2?>? _placeFuture;
   final _rangeField = TextEditingController(text: "1000");
   String _placeType = "Any";
-  Vector2 _currentLocation = Vector2.zero();
-  StreamSubscription<LocationData>? _locationStream;
+  Vector2 _locationCache = Vector2.zero();
 
   @override
   Widget build(BuildContext context) {
@@ -174,23 +172,20 @@ class _LocationFinderState extends State<LocationFinder> {
     } else {
       return Compass(
         target: snapshot.data!,
-        current: _currentLocation,
+        currentStart: _locationCache,
       );
     }
   }
 
-  Future<LocationData> _getLocation() {
-    _locationStream ??= Location.instance.onLocationChanged.listen((location) {
-      _currentLocation = Vector2(location.longitude!, location.latitude!);
-    });
-
-    return Location.instance.getLocation();
-  }
-
   Future<Vector2?> _fetchPlace() async {
-    final location = await _getLocation();
+    final location = await Location.instance.getLocation();
     final lat = location.latitude;
     final lon = location.longitude;
+    if (lat == null || lon == null) {
+      throw "No GPS sensors";
+    }
+
+    _locationCache = Vector2(lon, lat);
     final dist = int.parse(_rangeField.text);
     final tagFilter = placeTypeFilterDict[_placeType];
 
@@ -225,11 +220,11 @@ class Compass extends StatefulWidget {
   const Compass({
     super.key,
     required this.target,
-    required this.current,
+    required this.currentStart,
   });
 
   final Vector2 target;
-  final Vector2 current;
+  final Vector2 currentStart;
 
   @override
   State<Compass> createState() => _CompassState();
@@ -238,6 +233,16 @@ class Compass extends StatefulWidget {
 class _CompassState extends State<Compass> {
   double _prevHeading = 0.0;
   double _turns = 0.0;
+  late Vector2 _current;
+
+  @override
+  void initState() {
+    _current = widget.currentStart;
+    Location.instance.onLocationChanged.listen((location) {
+      _current = Vector2(location.longitude!, location.latitude!);
+    });
+    super.initState();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -261,7 +266,7 @@ class _CompassState extends State<Compass> {
           );
         }
 
-        final diffCoords = widget.target - widget.current;
+        final diffCoords = widget.target - _current;
         final targetDir = math.atan2(diffCoords.y, diffCoords.x);
         final heading = degrees(targetDir) - northDir + 90;
 
@@ -280,8 +285,8 @@ class _CompassState extends State<Compass> {
         // Uses https://en.wikipedia.org/wiki/Haversine_formula
         final sinDLat = math.sin(radians(diffCoords.y / 2));
         final sinDLon = math.sin(radians(diffCoords.x / 2));
-        final cosLat = math.cos(radians(widget.current.y)) *
-            math.cos(radians(widget.target.y));
+        final cosLat =
+            math.cos(radians(_current.y)) * math.cos(radians(widget.target.y));
         final a = math.pow(sinDLat, 2) + cosLat * math.pow(sinDLon, 2);
         final c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a));
         const earthR = 6378.137;
