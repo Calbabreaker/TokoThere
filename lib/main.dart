@@ -268,7 +268,7 @@ class _CompassState extends State<Compass> {
 
         final diffCoords = widget.target - _current;
         final targetDir = math.atan2(diffCoords.y, diffCoords.x);
-        final heading = degrees(targetDir) - northDir + 90;
+        final heading = degrees(targetDir) - northDir - 90;
 
         // Make sure arrow doesn't flip to other side
         double diff = heading - _prevHeading;
